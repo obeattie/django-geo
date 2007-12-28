@@ -11,13 +11,20 @@ class PickledObject(str):
 	   then it must [well, should] be a pickled one)."""
 	pass
 
-class PickledObjectField(models.TextField):
+class PickledObjectField(models.Field):
 	__metaclass__ = models.SubfieldBase
 	
 	def to_python(self, value):
-		if not isinstance(value, PickledObject):
-			return value
-		return pickle.loads(str(value))
+		if isinstance(value, PickledObject):
+			# If the value is a definite pickle; and an error is raised in de-pickling
+			# it should be allowed to propogate.
+			return pickle.loads(str(value))
+		else:
+			try:
+				return pickle.loads(str(value))
+			except:
+				# If an error was raised, just return the plain value
+				return value
 	
 	def get_db_prep_save(self, value):
 		if value is not None and not isinstance(value, PickledObject):

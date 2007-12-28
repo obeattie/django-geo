@@ -10,9 +10,9 @@ from django.utils.encoding import smart_unicode
 from django.core.exceptions import ObjectDoesNotExist
 from django.conf import settings
 # Imports for geo stuff
-from geo import misc as geo_misc
-from geo import geocoders, fields as custom_fields
-from geo.dateutil import relativedelta
+from wt.generic.geo import misc as geo_misc
+from wt.generic.geo import fields as custom_fields
+from wt.generic.geo.dateutil import relativedelta
 from geopy import geocoders as geopy_geocoders, distance as geopy_distance
 
 class LocationManager(models.Manager):
