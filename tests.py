@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Unit testing for this module's fields."""
+"""Unit testing for this module's fields and a subset of the model's functions.."""
 
 from geopy import geocoders as geopy_geocoders, distance as geopy_distance
 from django.test import TestCase
@@ -22,7 +22,6 @@ class PickledObjectFieldTests(TestCase):
 	
 	def testDataIntegriry(self):
 		"""Tests that data remains the same when saved to and fetched from the database."""
-		print 'wee'
 		for value in self.testing_data:
 			model_test = TestingModel(pickle_field=value)
 			model_test.save()
@@ -56,6 +55,5 @@ class GeocodingTest(TestCase):
 		self.assertEquals(self.query, self.location_object.query)
 	
 	def testGeocoding(self):
-		print 'Hello World.'
 		returned_query, correct_coords = getattr(geopy_geocoders, settings.DEFAULT_GEOCODER)(settings.GEOCODING_KEYS[settings.DEFAULT_GEOCODER]).geocode(self.query)
 		self.assertEquals(correct_coords, self.location_object.coords_tuple)
