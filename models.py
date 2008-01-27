@@ -1,23 +1,15 @@
-from django.db import models
 import datetime
-try:
-	import cPickle as pickle
-except ImportError:
-	import pickle
-# Imports for Django stuff
+from geopy import distance as geopy_distance
 from django.db import models
-from django.utils.encoding import smart_unicode
-from django.core.exceptions import ObjectDoesNotExist
 from django.conf import settings
-# Imports for geo stuff
-from wt.generic.geo import misc as geo_misc
-from wt.generic.geo import fields as custom_fields
-from wt.generic.geo.dateutil import relativedelta
-from geopy import geocoders as geopy_geocoders, distance as geopy_distance
+
+from geo import fields as custom_fields
+from geo import geocoding, misc
+from geo.dateutil.relativedelta import relativedelta
 
 class LocationManager(models.Manager):
 	def by_proximity_to_location(self, origin_location, radius_miles=None):
-		"""Returns a list of all Location objects (excluding the origin_location)
+		"""Returns a list of all self.model objects (excluding the origin_location)
 			within radius_miles miles of the passed location if specified (otherwise
 			returns all other objects), ordered by ascending proximity to it."""
 		
@@ -35,9 +27,9 @@ class LocationManager(models.Manager):
 				},
 			}
 		
-			results = Location.objects.filter(latitude__range=(coord_set['latitude']['minimum'], coord_set['latitude']['maximum'])).filter(longitude__range=(coord_set['longitude']['minimum'], coord_set['longitude']['maximum']))
+			results = self.model.objects.filter(latitude__range=(coord_set['latitude']['minimum'], coord_set['latitude']['maximum'])).filter(longitude__range=(coord_set['longitude']['minimum'], coord_set['longitude']['maximum']))
 		else:
-			results = Location.objects.all()
+			results = self.model.objects.all()
 		
 		# Exclude any locations with exactly the same co-ordinates (GeoPy doesn't play nice with these)
 		results = list(results.exclude(latitude__exact=origin_location.latitude).exclude(longitude__exact=origin_location.longitude))
@@ -48,7 +40,7 @@ class LocationManager(models.Manager):
 					results.remove(result)
 		
 		def proximity_cmp(current, previous, location=origin_location):
-			return geo_misc.base_cmp_by_proximity(current, previous, location.coords_tuple)
+			return misc.base_cmp_by_proximity(current, previous, location.coords_tuple)
 		
 		results.sort(proximity_cmp)
 		return results
@@ -58,34 +50,30 @@ class LocationManager(models.Manager):
 	
 	@property
 	def public(self):
-		"""Returns all Location objects which have is_public set as True (convenience function)."""
-		return Location.objects.filter(is_public=True)
+		"""Returns all self.model objects which have is_public set as True (convenience function)."""
+		return self.model.objects.filter(is_public=True)
 	
 	@property
 	def expired(self):
-		"""Returns all Location objects which have expired (convenience function)."""
-		return Location.objects.filter(refreshed__lte=(datetime.datetime.now() - relativedelta.relativedelta(**settings.MAX_LOCATION_CACHE_AGE)))
+		"""Returns all self.model objects which have expired (convenience function)."""
+		return self.model.objects.filter(refreshed__lte=(datetime.datetime.now() - relativedelta.relativedelta(**settings.MAX_LOCATION_CACHE_AGE)))
 	
 	def within_bounds(self, north_west, south_east):
-		"""Returns a QuerySet of Locations within the supplied lat/long two-tuples (the northwest
+		"""Returns a QuerySet of self.models within the supplied lat/long two-tuples (the northwest
 		   and southwest-most corners bounding the segment of the earth in which to search)."""
-		return Location.objects.filter(latitude__range=(north_west[0], south_east[0])).filter(longitude__range=(north_west[1], south_east[1]))
+		return self.model.objects.filter(latitude__range=(north_west[0], south_east[0])).filter(longitude__range=(north_west[1], south_east[1]))
 
 class Location(models.Model):
-	"""Defines a location somewhere on the globe (presumably! [somewhere with two-
-	   dimensional space defined by latitude/longitude anyway!]). All that needs 
-	   to be entered is a query, which is what will be geocoded (for example 
-	   'Penzance, UK'), and everything else will be taken care of automagically. 
-	   Note that if the object is to be used before it is saved, then
-	   refresh_if_needed needs to be called."""
-	
-	query = models.TextField('Location', blank=False, null=False) # TextField in case it's over 250 characters
+	"""A Location on the earth."""
+	query = models.CharField('Location', max_length=250, blank=False, null=False, unique=True)
 	friendly_name = models.CharField(max_length=250, blank=True, null=True, help_text='Use this to assign a friendly display-name to this location like \'Home\'.')
-	geocoder = custom_fields.PickledObjectField(blank=True, null=False)
+	geocoded = models.BooleanField(default=True)
+	result = custom_fields.PickledObjectField(blank=True, null=True, editable=False)
 	latitude = models.FloatField(blank=True, null=False)
 	longitude = models.FloatField(blank=True, null=False)
-	refreshed = models.DateTimeField(editable=False, blank=True, null=False)
-	created = models.DateTimeField(editable=False, blank=True, null=True)
+	refreshed = models.DateTimeField(editable=False, blank=True, null=False, default=datetime.datetime.now())
+	extra = custom_fields.DictionaryField('A dictionary of additional information', blank=True, null=True, editable=False)
+	created = models.DateTimeField(editable=False, blank=True, null=True, default=datetime.datetime.now())
 	is_public = models.BooleanField(default=True)
 	# Manager
 	objects = LocationManager()
@@ -94,73 +82,88 @@ class Location(models.Model):
 		list_display = ('__str__', 'latitude', 'longitude', 'created', 'refreshed')
 		list_filter = ('created', 'refreshed')
 	
-	@property
-	def coords(self):
-		"""A dictionary of latitude and longitude."""
-		return {
-				'latitude': self.latitude,
-				'longitude': self.longitude,
-			}
+	def save(self, *args, **kwargs):
+		self.refresh()
+		return super(Location, self).save(*args, **kwargs)
+	
+	# General
+	def __unicode__(self):
+		return unicode(self.name)
+	
+	def __getitem__(self, index):
+		"""Gets either a latitude or longitude by indexing the coords_tuple."""
+		return self.coords_tuple[index]
+	
+	def get_geocoder(self):
+		"""Returns an instantiated geocoder for this object. Make sure you have settings.DEFAULT_GEOCODER set correctly."""
+		return geocoding.SHORT_NAME_MAPPINGS[settings.DEFAULT_GEOCODER]
 	
 	@property
-	def name(self):
-		"""If it exists, returns the friendly_name, otherwise returns the query."""
-		return self.friendly_name or self.query
+	def coords(self):
+		if hasattr(self.result, 'coords'):
+			return self.result.coords
+		else:
+			return geocoding.Coordinates(float(self.latitude or 0), float(self.longitude or 0))
 	
 	@property
 	def coords_tuple(self):
-		"""A two-tuple of latitude and longitude."""
-		return (self.latitude, self.longitude)
-	
-	def __str__(self):
-		return self.name
-	
-	def save(self):
-		if not self.created:
-			self.created = datetime.datetime.now()
-		if not self.geocoder:
-			self.geocoder = getattr(geopy_geocoders, settings.DEFAULT_GEOCODER)
-		self.refresh_if_needed(save=False)
-		super(Location, self).save()
-	
-	def refresh(self, save=True):
-		"""Refreshes the geo-mapping."""
-		try:
-			geo_keys = settings.GEOCODING_KEYS
-		except AttributeError:
-			geo_keys = {}
-		if self.geocoder.__name__ in geo_keys.keys():
-			geocoder = self.geocoder(geo_keys[self.geocoder.__name__])
+		if not hasattr(self.result, 'coords'):
+			return (self.latitude, self.longitude)
 		else:
-			geocoder = self.geocoder()
-		try:
-			place, (self.latitude, self.longitude) = geocoder.geocode(self.query)
-			self.refreshed = datetime.datetime.now()
-			if save:
-				self.save()
-		except:
-			raise geo_misc.GeocodingError, 'The location \'%s\' could not be geocoded.' % self.query
-		return True
+			return tuple(self.result.coords)
 	
-	def refresh_if_needed(self, *args, **kwargs):
-		"""Refreshes the geo-mapping if it has already expired, or we don't have any data
-		   already"""
-		if self.expired or not (self.latitude or self.longitude):
-			return self.refresh(*args, **kwargs)
+	@property
+	def coords_dict(self):
+		if not hasattr(self.result, 'coords'):
+			return {u'latitude': self.latitude, u'longitude': self.longitude}
 		else:
-			return False
+			return {u'longitude': self.result.coords.latitude, u'longitude': self.result.coords.longitude}
+	
+	@property
+	def name(self):
+		return self.friendly_name or self.query
+	
+	# Caching
+	@property
+	def expires(self):
+		"""Returns the datetime when this object will be deemed to have expired."""
+		return self.refreshed + relativedelta(**settings.MAX_LOCATION_CACHE_AGE)
 	
 	@property
 	def expired(self):
-		if datetime.datetime.now() > (self.created + relativedelta.relativedelta(**settings.MAX_LOCATION_CACHE_AGE)):
+		"""Returns boolean as to whether this object has 'expired'. Always returns False if not geocoded."""
+		if not self.geocoded:
+			# This location hasn't been geocoded
+			return False
+		elif datetime.datetime.now() >= self.expires:
+			# The location has expired
 			return True
-		return False
+		elif not (self.result and hasattr(self.result, 'coords')):
+			# The location hasn't yet been geocoded, but it should have been
+			return True
+		else:
+			# The location hasn't expired
+			return False
 	
+	def force_refresh(self):
+		"""Forces a refresh of the geo-mapping by re-geocoding (if the location is geocoded)."""
+		if self.geocoded:
+			self.result = self.get_geocoder()(self).geocode()
+			self.latitude, self.longitude = tuple(self.result.coords)[:2]
+			self.refreshed = datetime.datetime.now()
+		return self
+	
+	def refresh(self):
+		"""Refreshes the geo-mapping it has already expired."""
+		if self.expired:
+			self.force_refresh()
+		return self
+	
+	# Conveniences
 	def distance_between(self, other_location, units='miles'):
 		"""Calculates the distance between this Location object and another Location object.
-		   units should be a string containing the unit of measurement (default: miles) you
-		   would like the result returned in (kilometers, miles, feet or nautical)."""
-		
+		   units should be a string containing the unit of measurement (default: miles) you would like
+		   the result returned in (kilometers, miles, feet or nautical)."""
 		if self.coords_tuple == other_location.coords_tuple:
 			return 0
 		dist_obj = geopy_distance.distance(self.coords_tuple, other_location.coords_tuple)
@@ -170,7 +173,7 @@ class Location(models.Model):
 		"""Given 2x two-tuples containing lat/long pairs (the northwest and southeast corners
 		   bounding a segment of the earth), returns Boolean as to whether this Location falls
 		   inside the area."""
-		if (north_west[0] < self.latitude < south_east[0]) and (north_west[1] < self.longitude < south_east[1]):
+		if (north_west[0] > self.latitude > south_east[0]) and (north_west[1] < self.longitude < south_east[1]):
 			return True
 		else:
 			return False

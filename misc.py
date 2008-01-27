@@ -262,3 +262,22 @@ def base_cmp_by_proximity(current, previous, coords):
 
 class GeocodingError(Exception):
 	pass
+
+google_map_types = {
+	'standard': 'G_NORMAL_MAP',
+	'normal': 'G_NORMAL_MAP',
+	'street': 'G_NORMAL_MAP',
+	'satellite': 'G_SATELLITE_MAP',
+	'hybrid': 'G_HYBRID_MAP',
+}
+
+yahoo_precision_to_google_zoom_mappings = {
+	'address': 17,
+	'street': 16,
+	'zip+4': 15,
+	'zip+2': 14,
+	'zip': 13,
+	'city': 11,
+	'state': 9,
+	'country': 3,
+}
