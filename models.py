@@ -2,6 +2,7 @@ import datetime
 from geopy import distance as geopy_distance
 from django.db import models
 from django.conf import settings
+from django.utils.translation import ugettext_lazy as _
 
 from geo import fields as custom_fields
 from geo import geocoding, misc
@@ -65,14 +66,14 @@ class LocationManager(models.Manager):
 
 class Location(models.Model):
 	"""A Location on the earth."""
-	query = models.CharField('Location', max_length=250, blank=False, null=False, unique=True)
-	friendly_name = models.CharField(max_length=250, blank=True, null=True, help_text='Use this to assign a friendly display-name to this location like \'Home\'.')
+	query = models.CharField(_('Location'), max_length=250, blank=False, null=False, unique=True)
+	friendly_name = models.CharField(max_length=250, blank=True, null=True, help_text=_('Use this to assign a friendly display-name to this location like \'Home\'.'))
 	geocoded = models.BooleanField(default=True)
 	result = custom_fields.PickledObjectField(blank=True, null=True, editable=False)
 	latitude = models.FloatField(blank=True, null=False)
 	longitude = models.FloatField(blank=True, null=False)
 	refreshed = models.DateTimeField(editable=False, blank=True, null=False, default=datetime.datetime.now())
-	extra = custom_fields.DictionaryField('A dictionary of additional information', blank=True, null=True, editable=False)
+	extra = custom_fields.DictionaryField(_('A dictionary of additional information'), blank=True, null=True, editable=False)
 	created = models.DateTimeField(editable=False, blank=True, null=True, default=datetime.datetime.now())
 	is_public = models.BooleanField(default=True)
 	# Manager
